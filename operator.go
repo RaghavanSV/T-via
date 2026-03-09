@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -72,12 +74,14 @@ func ForGithub() {
 	obj.UrlC = body["comments_url"].(string) //type assert -> when we are using interface we should do it.
 
 	var end string = ""
-	var cmd string = ""
 	var output []map[string]interface{}
+
+	reader := bufio.NewReader(os.Stdin)
 
 	for end != "end" {
 		fmt.Print("command> ")
-		fmt.Scan(&cmd)
+		cmd, _ := reader.ReadString('\n')
+		cmd = strings.TrimSpace(cmd)
 
 		//for sending the command
 		obj.BodyC = map[string]string{
@@ -98,7 +102,7 @@ func ForGithub() {
 		}
 
 		fmt.Println("[-] Waiting to read the output......")
-		time.Sleep(50 * time.Second)
+		time.Sleep(20 * time.Second)
 
 		//for reading the output
 
@@ -111,18 +115,17 @@ func ForGithub() {
 		if err3 != nil {
 			fmt.Println("[-] Error in reading the output")
 			fmt.Println(err3)
+			continue
 		}
 
 		body, _ := io.ReadAll(response3.Body)
 		json.Unmarshal(body, &output)
 		fmt.Println("[+] Command Output : ", output[len(output)-1]["body"])
 
-		//json.NewDecoder(response3.Body).Decode(&output)
-
-		//fmt.Println("[+] Output : ", output[len(output)-1])
-
 		fmt.Print("Continue (end/quit): ")
-		fmt.Scan(&end)
+		end, _ = reader.ReadString('\n')
+		end = strings.TrimSpace(end)
+
 	}
 }
 
